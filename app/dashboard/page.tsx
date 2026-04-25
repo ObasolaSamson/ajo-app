@@ -110,7 +110,7 @@ export default async function DashboardPage() {
         key: `contrib-${c.id}`,
         type: 'contribution',
         message: `${name} paid their contribution in ${circle?.name ?? 'a circle'}`,
-        time: (c.paid_at ?? c.created_at) as string,
+        time: c.paid_at as string,
         circleId: circle?.id ?? c.circle_id,
         circleName: circle?.name ?? '',
       })
