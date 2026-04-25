@@ -28,24 +28,26 @@ export default async function InvitePage({ params }: InvitePageProps) {
 
   if (!circle) notFound()
 
-  // Only members can see the invite page
-  const { data: membership } = await supabase
-    .from('circle_members')
-    .select('id, role')
-    .eq('circle_id', id)
-    .eq('profile_id', user.id)
-    .single()
-
-  if (!membership) redirect(`/dashboard/circles/${id}`)
-
   const isOrganizer = circle.organizer_id === user.id
 
-  // Fetch all members with status
-  const { data: members } = await supabase
-    .from('circle_members')
-    .select('*, profiles(full_name, email)')
-    .eq('circle_id', id)
-    .order('joined_at', { ascending: true })
+  // Membership check and full member list fire in parallel
+  const [membershipResult, membersResult] = await Promise.all([
+    supabase
+      .from('circle_members')
+      .select('id, role')
+      .eq('circle_id', id)
+      .eq('profile_id', user.id)
+      .single(),
+    supabase
+      .from('circle_members')
+      .select('*, profiles(full_name, email)')
+      .eq('circle_id', id)
+      .order('joined_at', { ascending: true }),
+  ])
+
+  if (!membershipResult.data) redirect(`/dashboard/circles/${id}`)
+
+  const members = membersResult.data
 
   const memberList = members ?? []
   const activeMembers = memberList.filter((m) => m.status === 'active')

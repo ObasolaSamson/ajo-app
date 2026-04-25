@@ -13,8 +13,8 @@ export async function updateProfile(formData: FormData) {
 
   if (!user) redirect('/login')
 
-  const full_name = (formData.get('full_name') as string).trim()
-  const phone = (formData.get('phone') as string).trim()
+  const full_name = ((formData.get('full_name') as string) ?? '').trim()
+  const phone = ((formData.get('phone') as string) ?? '').trim()
 
   const { error } = await supabase
     .from('profiles')

@@ -4,9 +4,18 @@ import { NextResponse, type NextRequest } from 'next/server'
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseKey) {
+    // Can't authenticate without env vars — allow the request to continue,
+    // the dashboard layout will handle the redirect.
+    return supabaseResponse
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseKey,
     {
       cookies: {
         getAll() {

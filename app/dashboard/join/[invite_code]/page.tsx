@@ -52,26 +52,26 @@ export default async function JoinCirclePage({
 
   if (!circle) notFound()
 
-  // Count current members
-  const { count: memberCount } = await supabase
-    .from('circle_members')
-    .select('id', { count: 'exact', head: true })
-    .eq('circle_id', circle.id)
+  // Member count and existing membership check run in parallel
+  const [countResult, existingResult] = await Promise.all([
+    supabase
+      .from('circle_members')
+      .select('id', { count: 'exact', head: true })
+      .eq('circle_id', circle.id),
+    supabase
+      .from('circle_members')
+      .select('id')
+      .eq('circle_id', circle.id)
+      .eq('profile_id', user.id)
+      .single(),
+  ])
 
-  const currentCount = memberCount ?? 0
-  const isFull = currentCount >= circle.total_slots
-
-  // Check if already a member (profile_id = user.id)
-  const { data: existingMembership } = await supabase
-    .from('circle_members')
-    .select('id')
-    .eq('circle_id', circle.id)
-    .eq('profile_id', user.id)
-    .single()
-
-  if (existingMembership) {
+  if (existingResult.data) {
     redirect(`/dashboard/circles/${circle.id}`)
   }
+
+  const currentCount = countResult.count ?? 0
+  const isFull = currentCount >= circle.total_slots
 
   const joinWithCode = joinCircle.bind(null, circle.id, invite_code.toUpperCase())
 

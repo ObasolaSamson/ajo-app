@@ -40,7 +40,7 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
 
   if (!user) redirect('/login')
 
-  // Fetch circle
+  // Fetch circle first — needed for currentRound below
   const { data: circle } = await supabase
     .from('circles')
     .select('*')
@@ -52,25 +52,31 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
   const currentRound: number = circle.current_round ?? 1
   const isOrganizer = circle.organizer_id === user.id
 
-  // Fetch members with profile info
-  const { data: members } = await supabase
-    .from('circle_members')
-    .select('*, profiles(full_name, email)')
-    .eq('circle_id', id)
-    .order('joined_at', { ascending: true })
+  // Fetch members, payout slots, and current-round contributions in parallel
+  const [membersResult, payoutSlotsResult, contributionsResult] = await Promise.all([
+    supabase
+      .from('circle_members')
+      .select('*, profiles(full_name, email)')
+      .eq('circle_id', id)
+      .order('joined_at', { ascending: true }),
+    supabase
+      .from('payout_slots')
+      .select('*')
+      .eq('circle_id', id)
+      .order('slot_number', { ascending: true }),
+    supabase
+      .from('contributions')
+      .select('*')
+      .eq('circle_id', id)
+      .eq('round_number', currentRound),
+  ])
 
-  const memberList = members ?? []
+  const memberList = membersResult.data ?? []
+  const slots = payoutSlotsResult.data ?? []
+  const contributions = contributionsResult.data ?? []
+
   const currentMember = memberList.find((m) => m.profile_id === user.id)
   const isMember = !!currentMember
-
-  // Fetch payout slots (member_id → circle_members.id)
-  const { data: payoutSlots } = await supabase
-    .from('payout_slots')
-    .select('*')
-    .eq('circle_id', id)
-    .order('slot_number', { ascending: true })
-
-  const slots = payoutSlots ?? []
 
   // Merge members with their slot, sort by slot_number
   const membersWithSlots = memberList
@@ -79,15 +85,6 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
       slot: slots.find((s) => s.member_id === m.id) ?? null,
     }))
     .sort((a, b) => (a.slot?.slot_number ?? 999) - (b.slot?.slot_number ?? 999))
-
-  // Fetch contributions for the current round
-  const { data: roundContributions } = await supabase
-    .from('contributions')
-    .select('*')
-    .eq('circle_id', id)
-    .eq('round_number', currentRound)
-
-  const contributions = roundContributions ?? []
   const paidMemberIds = new Set(contributions.map((c) => c.member_id as string))
 
   const paidCount = paidMemberIds.size
