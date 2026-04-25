@@ -35,6 +35,24 @@ type ActivityItem = {
   circleName: string
 }
 
+type CircleRow = {
+  id: string
+  name: string
+  description: string | null
+  frequency: string
+  contribution_amount: number
+  total_slots: number
+  current_round: number
+  status: string
+  start_date: string
+  invite_code: string
+  organizer_id: string
+  created_at: string
+}
+
+type CircleRef = { id: string; name: string }
+type ProfileRef = { full_name: string | null; email: string | null }
+
 export default async function DashboardPage() {
   const supabase = await createClient()
 
@@ -54,8 +72,10 @@ export default async function DashboardPage() {
     .eq('profile_id', user.id)
     .order('joined_at', { ascending: false })
 
-  const circles = (memberships ?? []).map((m) => m.circles as Record<string, unknown>)
-  const circleIds = circles.map((c) => c.id as string)
+  const circles = (memberships ?? []).map(
+    (m) => m.circles as unknown as CircleRow
+  )
+  const circleIds = circles.map((c) => c.id)
 
   // ── Activity feed ────────────────────────────────────────────────────────────
 
@@ -70,8 +90,8 @@ export default async function DashboardPage() {
 
     const memberNameMap = new Map<string, string>()
     for (const m of allMembers ?? []) {
-      const p = m.profiles as { full_name?: string; email?: string } | null
-      memberNameMap.set(m.id as string, p?.full_name || p?.email || 'Someone')
+      const p = m.profiles as unknown as ProfileRef | null
+      memberNameMap.set(m.id, p?.full_name || p?.email || 'Someone')
     }
 
     // 1. Recent contributions
@@ -84,14 +104,14 @@ export default async function DashboardPage() {
       .limit(15)
 
     for (const c of contribs ?? []) {
-      const circle = c.circles as { id: string; name: string } | null
-      const name = memberNameMap.get(c.member_id as string) ?? 'Someone'
+      const circle = c.circles as unknown as CircleRef | null
+      const name = memberNameMap.get(c.member_id) ?? 'Someone'
       activityItems.push({
         key: `contrib-${c.id}`,
         type: 'contribution',
         message: `${name} paid their contribution in ${circle?.name ?? 'a circle'}`,
-        time: c.paid_at as string,
-        circleId: circle?.id ?? (c.circle_id as string),
+        time: (c.paid_at ?? c.created_at) as string,
+        circleId: circle?.id ?? c.circle_id,
         circleName: circle?.name ?? '',
       })
     }
@@ -105,10 +125,10 @@ export default async function DashboardPage() {
       .limit(15)
 
     for (const j of joins ?? []) {
-      const circle = j.circles as { id: string; name: string } | null
-      const p = j.profiles as { full_name?: string; email?: string } | null
+      const circle = j.circles as unknown as CircleRef | null
+      const p = j.profiles as unknown as ProfileRef | null
       const name = p?.full_name || p?.email || 'Someone'
-      const isYou = (j.profile_id as string) === user.id
+      const isYou = j.profile_id === user.id
       activityItems.push({
         key: `join-${j.id}`,
         type: 'joined',
@@ -116,7 +136,7 @@ export default async function DashboardPage() {
           ? `You joined ${circle?.name ?? 'a circle'}`
           : `${name} joined ${circle?.name ?? 'a circle'}`,
         time: j.joined_at as string,
-        circleId: circle?.id ?? (j.circle_id as string),
+        circleId: circle?.id ?? j.circle_id,
         circleName: circle?.name ?? '',
       })
     }
@@ -132,14 +152,14 @@ export default async function DashboardPage() {
       .limit(10)
 
     for (const p of payouts ?? []) {
-      const circle = p.circles as { id: string; name: string } | null
-      const name = memberNameMap.get(p.member_id as string) ?? 'Someone'
+      const circle = p.circles as unknown as CircleRef | null
+      const name = memberNameMap.get(p.member_id) ?? 'Someone'
       activityItems.push({
         key: `payout-${p.id}`,
         type: 'payout',
         message: `Payout released to ${name} in ${circle?.name ?? 'a circle'}`,
         time: p.paid_at as string,
-        circleId: circle?.id ?? (p.circle_id as string),
+        circleId: circle?.id ?? p.circle_id,
         circleName: circle?.name ?? '',
       })
     }
@@ -298,28 +318,22 @@ function EmptyCircles() {
   )
 }
 
-function CircleCard({ circle }: { circle: Record<string, unknown> }) {
-  const amount =
-    typeof circle.contribution_amount === 'number'
-      ? formatCurrency(circle.contribution_amount)
-      : '—'
-
+function CircleCard({ circle }: { circle: CircleRow }) {
   return (
     <Link
       href={`/dashboard/circles/${circle.id}`}
       className="group flex items-center gap-4 rounded-xl bg-white border border-zinc-100 shadow-sm hover:shadow-md hover:border-ajo-muted transition-all p-4"
     >
-      {/* Circle avatar */}
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ajo-light text-ajo font-bold text-sm">
-        {(circle.name as string).charAt(0).toUpperCase()}
+        {circle.name.charAt(0).toUpperCase()}
       </div>
 
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-zinc-900 truncate group-hover:text-ajo transition-colors">
-          {circle.name as string}
+          {circle.name}
         </h3>
         <p className="text-xs text-zinc-400 mt-0.5">
-          {amount} · {frequencyLabel(circle.frequency as string)} · {circle.total_slots as number} members
+          {formatCurrency(circle.contribution_amount)} · {frequencyLabel(circle.frequency)} · {circle.total_slots} members
         </p>
       </div>
 
