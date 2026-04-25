@@ -10,6 +10,10 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --color-ajo: #1D9E75;
+  --color-ajo-dark: #178A63;
+  --color-ajo-light: #E8F7F2;
+  --color-ajo-muted: #D1EFE4;
 }
 
 @media (prefers-color-scheme: dark) {
