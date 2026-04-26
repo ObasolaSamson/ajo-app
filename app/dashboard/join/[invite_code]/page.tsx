@@ -44,13 +44,15 @@ export default async function JoinCirclePage({
 
   if (!user) redirect('/login')
 
-  const normalizedCode = invite_code.toUpperCase()
+  const normalizedCode = invite_code.trim().toUpperCase()
 
-  // Look up circle by invite_code — never throw notFound() for a valid code
+  // Look up circle by invite_code — never throw notFound() for a valid code.
+  // Use ilike (case-insensitive) so casing differences between the URL and
+  // what's stored in the DB never cause a false miss.
   const { data: circle, error: circleError } = await supabase
     .from('circles')
     .select('*')
-    .eq('invite_code', normalizedCode)
+    .ilike('invite_code', normalizedCode)
     .single()
 
   // Circle not found or DB error — show a clear message, not a hard 404

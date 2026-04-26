@@ -110,12 +110,14 @@ export async function joinCircle(circleId: string, inviteCode: string) {
 
   if (!user) redirect('/login')
 
-  // Verify circle exists
+  const normalizedCode = inviteCode.trim().toUpperCase()
+
+  // Verify circle exists — use ilike so any casing difference never blocks a join
   const { data: circle, error: circleError } = await supabase
     .from('circles')
     .select('id, total_slots')
     .eq('id', circleId)
-    .eq('invite_code', inviteCode)
+    .ilike('invite_code', normalizedCode)
     .single()
 
   if (circleError || !circle) {
