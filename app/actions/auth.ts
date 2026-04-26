@@ -41,6 +41,7 @@ export async function signup(formData: FormData) {
     redirect(`/signup?error=${encodeURIComponent('Email and password are required')}`)
   }
 
+  let userId: string | null = null
   let session: unknown = undefined
   let error: { message: string } | null = null
 
@@ -52,6 +53,7 @@ export async function signup(formData: FormData) {
         data: { full_name: fullName },
       },
     })
+    userId = result.data?.user?.id ?? null
     session = result.data?.session ?? null
     error = result.error
   } catch (e) {
@@ -63,6 +65,25 @@ export async function signup(formData: FormData) {
   if (error) {
     console.error('[signup] auth error:', error.message)
     redirect(`/signup?error=${encodeURIComponent(error.message)}`)
+  }
+
+  // Explicitly upsert a profiles row right after auth signup.
+  // The DB trigger may do this too, but it can fail silently (e.g. race
+  // conditions, trigger errors). Without a profile row, circle creation
+  // fails with a foreign-key violation on circles.organizer_id.
+  if (userId) {
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert(
+        { id: userId, email, full_name: fullName || null },
+        { onConflict: 'id', ignoreDuplicates: true }
+      )
+
+    if (profileError) {
+      // Non-fatal — log it so it appears in Vercel function logs, but don't
+      // block the user. The trigger may have already created the row.
+      console.error('[signup] profile upsert error:', profileError.message)
+    }
   }
 
   // Supabase returns a user but null session when email confirmation is required.

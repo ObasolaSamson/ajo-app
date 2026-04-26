@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { updateProfile } from '@/app/actions/profile'
 import { logout } from '@/app/actions/auth'
+import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface ProfilePageProps {
   searchParams: Promise<{ error?: string; saved?: string }>
@@ -113,12 +114,12 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
             />
           </div>
 
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="Saving…"
             className="w-full rounded-lg bg-ajo px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-ajo-dark focus:outline-none focus:ring-2 focus:ring-ajo focus:ring-offset-2 transition-colors"
           >
             Save Changes
-          </button>
+          </SubmitButton>
         </form>
       </div>
 
@@ -129,12 +130,12 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
           Sign out of your account on this device.
         </p>
         <form action={logout}>
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="Signing out…"
             className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
           >
             <LogoutIcon /> Sign out
-          </button>
+          </SubmitButton>
         </form>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface JoinPageProps {
   searchParams: Promise<{ code?: string }>
@@ -55,12 +56,12 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
             />
           </div>
 
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="Looking up…"
             className="w-full rounded-lg bg-ajo px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-ajo-dark focus:outline-none focus:ring-2 focus:ring-ajo focus:ring-offset-2 transition-colors"
           >
             Look up Circle
-          </button>
+          </SubmitButton>
         </form>
       </div>
     </div>

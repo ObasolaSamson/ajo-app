@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { joinCircle } from '@/app/actions/circles'
+import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface JoinCirclePageProps {
   params: Promise<{ invite_code: string }>
@@ -161,12 +162,12 @@ export default async function JoinCirclePage({
             </div>
           ) : (
             <form action={joinWithCode}>
-              <button
-                type="submit"
+              <SubmitButton
+                pendingText="Joining circle…"
                 className="w-full rounded-lg bg-ajo px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-ajo-dark focus:outline-none focus:ring-2 focus:ring-ajo focus:ring-offset-2 transition-colors"
               >
                 Confirm &amp; Join Circle
-              </button>
+              </SubmitButton>
               <p className="mt-3 text-center text-xs text-zinc-400">
                 You&apos;ll be assigned payout slot #{currentCount + 1}
               </p>

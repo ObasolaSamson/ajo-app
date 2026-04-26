@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { markAsPaid } from '@/app/actions/circles'
 import { ReleasePayoutButton } from '@/app/components/ReleasePayoutButton'
+import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface CircleDetailPageProps {
   params: Promise<{ id: string }>
@@ -279,12 +280,12 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
                             <input type="hidden" name="member_id" value={m.id} />
                             <input type="hidden" name="round_number" value={currentRound} />
                             <input type="hidden" name="amount" value={circle.contribution_amount} />
-                            <button
-                              type="submit"
+                            <SubmitButton
+                              pendingText="Saving…"
                               className="rounded-lg border border-ajo bg-white px-2.5 py-1 text-xs font-semibold text-ajo hover:bg-ajo-light transition-colors"
                             >
                               Mark Paid
-                            </button>
+                            </SubmitButton>
                           </form>
                         )}
                       </>

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { createCircle } from '@/app/actions/circles'
+import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface NewCirclePageProps {
   searchParams: Promise<{ error?: string }>
@@ -146,12 +147,12 @@ export default async function NewCirclePage({ searchParams }: NewCirclePageProps
             After creating, share the invite link with your circle members.
           </div>
 
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="Creating circle…"
             className="w-full rounded-lg bg-ajo px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-ajo-dark focus:outline-none focus:ring-2 focus:ring-ajo focus:ring-offset-2 transition-colors"
           >
             Create Circle
-          </button>
+          </SubmitButton>
         </form>
       </div>
     </div>
