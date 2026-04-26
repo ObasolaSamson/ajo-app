@@ -76,18 +76,23 @@ export default async function NewCirclePage({ searchParams }: NewCirclePageProps
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="contribution_amount" className={labelClass}>
-                Contribution amount ($) <span className="text-red-400">*</span>
+                Contribution amount <span className="text-red-400">*</span>
               </label>
-              <input
-                id="contribution_amount"
-                name="contribution_amount"
-                type="number"
-                required
-                min={100}
-                step={100}
-                className={inputClass}
-                placeholder="e.g. 10000"
-              />
+              <div className="relative">
+                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-sm text-zinc-400 select-none">
+                  $
+                </span>
+                <input
+                  id="contribution_amount"
+                  name="contribution_amount"
+                  type="text"
+                  inputMode="decimal"
+                  required
+                  className={`${inputClass} pl-7`}
+                  placeholder="e.g. 500"
+                />
+              </div>
+              <p className="mt-1 text-xs text-zinc-400">Minimum $50</p>
             </div>
 
             <div>

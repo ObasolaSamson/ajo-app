@@ -14,13 +14,37 @@ export async function createCircle(formData: FormData) {
 
   if (!user) redirect('/login')
 
-  const name = formData.get('name') as string
-  const description = formData.get('description') as string
-  const contribution_amount = parseFloat(formData.get('contribution_amount') as string)
+  // Ensure a profile row exists before inserting the circle.
+  // Without this the circles.organizer_id foreign key fails when the
+  // DB trigger hasn't run yet (e.g. first sign-in on a fresh deploy).
+  await supabase
+    .from('profiles')
+    .upsert(
+      { id: user.id, email: user.email ?? '', full_name: user.user_metadata?.full_name ?? null },
+      { onConflict: 'id', ignoreDuplicates: true }
+    )
+
+  const name = ((formData.get('name') as string) ?? '').trim()
+  const description = ((formData.get('description') as string) ?? '').trim()
+
+  // Strip any non-numeric characters (e.g. "$", ",", spaces) before parsing.
+  const rawAmount = (formData.get('contribution_amount') as string) ?? ''
+  const contribution_amount = parseFloat(rawAmount.replace(/[^0-9.]/g, ''))
+
   const frequency = formData.get('frequency') as string
   const total_slots = parseInt(formData.get('max_members') as string, 10)
   const start_date = formData.get('start_date') as string
   const invite_code = nanoid(8).toUpperCase()
+
+  if (!name) {
+    redirect(`/dashboard/circles/new?error=${encodeURIComponent('Circle name is required')}`)
+  }
+  if (isNaN(contribution_amount) || contribution_amount < 50) {
+    redirect(`/dashboard/circles/new?error=${encodeURIComponent('Contribution amount must be at least $50')}`)
+  }
+  if (isNaN(total_slots) || total_slots < 2 || total_slots > 50) {
+    redirect(`/dashboard/circles/new?error=${encodeURIComponent('Number of members must be between 2 and 50')}`)
+  }
 
   const { data: circle, error } = await supabase
     .from('circles')
