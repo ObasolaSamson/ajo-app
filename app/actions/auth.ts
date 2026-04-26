@@ -4,11 +4,19 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
+/** Only allow relative, same-origin paths to prevent open-redirect attacks. */
+function safeRedirect(value: FormDataEntryValue | null): string {
+  if (typeof value !== 'string') return '/dashboard'
+  if (!value.startsWith('/') || value.startsWith('//')) return '/dashboard'
+  return value
+}
+
 export async function login(formData: FormData) {
   const supabase = await createClient()
 
   const email = formData.get('email') as string
   const password = formData.get('password') as string
+  const redirectTo = safeRedirect(formData.get('redirect'))
 
   let error: { message: string } | null = null
 
@@ -18,16 +26,18 @@ export async function login(formData: FormData) {
   } catch (e) {
     console.error('[login] unexpected error:', e)
     const msg = e instanceof Error ? e.message : 'An unexpected error occurred'
-    redirect(`/login?error=${encodeURIComponent(msg)}`)
+    const params = new URLSearchParams({ error: msg, redirect: redirectTo })
+    redirect(`/login?${params}`)
   }
 
   if (error) {
     console.error('[login] auth error:', error.message)
-    redirect(`/login?error=${encodeURIComponent(error.message)}`)
+    const params = new URLSearchParams({ error: error.message, redirect: redirectTo })
+    redirect(`/login?${params}`)
   }
 
   revalidatePath('/', 'layout')
-  redirect('/dashboard')
+  redirect(redirectTo)
 }
 
 export async function signup(formData: FormData) {
@@ -36,9 +46,14 @@ export async function signup(formData: FormData) {
   const email = ((formData.get('email') as string) ?? '').trim()
   const password = ((formData.get('password') as string) ?? '').trim()
   const fullName = ((formData.get('full_name') as string) ?? '').trim()
+  const redirectTo = safeRedirect(formData.get('redirect'))
 
   if (!email || !password) {
-    redirect(`/signup?error=${encodeURIComponent('Email and password are required')}`)
+    const params = new URLSearchParams({
+      error: 'Email and password are required',
+      redirect: redirectTo,
+    })
+    redirect(`/signup?${params}`)
   }
 
   let userId: string | null = null
@@ -49,9 +64,7 @@ export async function signup(formData: FormData) {
     const result = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { full_name: fullName },
-      },
+      options: { data: { full_name: fullName } },
     })
     userId = result.data?.user?.id ?? null
     session = result.data?.session ?? null
@@ -59,18 +72,18 @@ export async function signup(formData: FormData) {
   } catch (e) {
     console.error('[signup] unexpected error:', e)
     const msg = e instanceof Error ? e.message : 'An unexpected error occurred during sign up'
-    redirect(`/signup?error=${encodeURIComponent(msg)}`)
+    const params = new URLSearchParams({ error: msg, redirect: redirectTo })
+    redirect(`/signup?${params}`)
   }
 
   if (error) {
     console.error('[signup] auth error:', error.message)
-    redirect(`/signup?error=${encodeURIComponent(error.message)}`)
+    const params = new URLSearchParams({ error: error.message, redirect: redirectTo })
+    redirect(`/signup?${params}`)
   }
 
-  // Explicitly upsert a profiles row right after auth signup.
-  // The DB trigger may do this too, but it can fail silently (e.g. race
-  // conditions, trigger errors). Without a profile row, circle creation
-  // fails with a foreign-key violation on circles.organizer_id.
+  // Explicitly upsert a profiles row right after auth signup so the
+  // circles.organizer_id foreign key never fails.
   if (userId) {
     const { error: profileError } = await supabase
       .from('profiles')
@@ -80,21 +93,20 @@ export async function signup(formData: FormData) {
       )
 
     if (profileError) {
-      // Non-fatal — log it so it appears in Vercel function logs, but don't
-      // block the user. The trigger may have already created the row.
       console.error('[signup] profile upsert error:', profileError.message)
     }
   }
 
-  // Supabase returns a user but null session when email confirmation is required.
-  // Rather than redirecting to /dashboard (where the proxy will bounce them back),
-  // send them to a confirmation page so they know to check their email.
+  // Email confirmation required — session is null.
+  // Pass the redirect along so the confirm page can surface it to the user.
   if (!session) {
-    redirect(`/signup/confirm?email=${encodeURIComponent(email)}`)
+    const params = new URLSearchParams({ email })
+    if (redirectTo !== '/dashboard') params.set('redirect', redirectTo)
+    redirect(`/signup/confirm?${params}`)
   }
 
   revalidatePath('/', 'layout')
-  redirect('/dashboard')
+  redirect(redirectTo)
 }
 
 export async function logout() {

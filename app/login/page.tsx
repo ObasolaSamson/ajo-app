@@ -3,11 +3,11 @@ import { login } from '@/app/actions/auth'
 import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface LoginPageProps {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; redirect?: string }>
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { error } = await searchParams
+  const { error, redirect: redirectTo } = await searchParams
 
   return (
     <div className="min-h-screen flex">
@@ -89,6 +89,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           )}
 
           <form action={login} className="space-y-5">
+            {redirectTo && (
+              <input type="hidden" name="redirect" value={redirectTo} />
+            )}
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-zinc-700 mb-1.5">
                 Email address

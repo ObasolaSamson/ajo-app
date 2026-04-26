@@ -3,11 +3,11 @@ import { signup } from '@/app/actions/auth'
 import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface SignupPageProps {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; redirect?: string }>
 }
 
 export default async function SignupPage({ searchParams }: SignupPageProps) {
-  const { error } = await searchParams
+  const { error, redirect: redirectTo } = await searchParams
 
   return (
     <div className="min-h-screen flex">
@@ -75,6 +75,9 @@ export default async function SignupPage({ searchParams }: SignupPageProps) {
           )}
 
           <form action={signup} className="space-y-5">
+            {redirectTo && (
+              <input type="hidden" name="redirect" value={redirectTo} />
+            )}
             <div>
               <label htmlFor="full_name" className="block text-sm font-medium text-zinc-700 mb-1.5">
                 Full name

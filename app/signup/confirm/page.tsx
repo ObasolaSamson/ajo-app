@@ -1,12 +1,16 @@
 import Link from 'next/link'
 
 interface ConfirmPageProps {
-  searchParams: Promise<{ email?: string }>
+  searchParams: Promise<{ email?: string; redirect?: string }>
 }
 
 export default async function ConfirmPage({ searchParams }: ConfirmPageProps) {
-  const { email } = await searchParams
+  const { email, redirect: redirectTo } = await searchParams
   const displayEmail = email ? decodeURIComponent(email) : 'your email address'
+
+  const loginHref = redirectTo
+    ? `/login?redirect=${encodeURIComponent(redirectTo)}`
+    : '/login'
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white px-6 py-16">
@@ -51,7 +55,7 @@ export default async function ConfirmPage({ searchParams }: ConfirmPageProps) {
         </div>
 
         <Link
-          href="/login"
+          href={loginHref}
           className="inline-flex items-center justify-center w-full rounded-xl bg-ajo px-4 py-3 text-sm font-semibold text-white hover:bg-ajo-dark transition-colors"
         >
           Go to sign in
