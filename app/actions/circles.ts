@@ -121,26 +121,42 @@ export async function joinCircle(circleId: string, inviteCode: string) {
     .single()
 
   if (circleError || !circle) {
+    console.error(
+      '[joinCircle] circle lookup failed — id:', circleId, 'code:', normalizedCode,
+      '| error:', circleError?.code, circleError?.message,
+      '| hint: PGRST116 = RLS blocking SELECT on circles table'
+    )
     redirect(`/dashboard/join/${inviteCode}?error=${encodeURIComponent('Circle not found')}`)
   }
 
-  // Check if already a member
+  // Check if already a member (maybeSingle never errors on zero rows)
   const { data: existing } = await supabase
     .from('circle_members')
     .select('id')
     .eq('circle_id', circleId)
     .eq('profile_id', user.id)
-    .single()
+    .maybeSingle()
 
   if (existing) {
     redirect(`/dashboard/circles/${circleId}`)
   }
 
-  // Count current members to assign next slot
-  const { count } = await supabase
+  // Count ALL current members.
+  // If circle_members SELECT RLS only returns the current user's own rows,
+  // this count will be wrong (0 instead of the real member count).
+  // Fix: run the SQL in the comment block at the top of this file.
+  const { count, error: countError } = await supabase
     .from('circle_members')
     .select('id', { count: 'exact', head: true })
     .eq('circle_id', circleId)
+
+  if (countError) {
+    console.error(
+      '[joinCircle] member count failed — circleId:', circleId,
+      '| error:', countError.code, countError.message,
+      '| hint: PGRST116 = RLS blocking SELECT on circle_members table'
+    )
+  }
 
   const currentCount = count ?? 0
 
@@ -161,6 +177,7 @@ export async function joinCircle(circleId: string, inviteCode: string) {
     .single()
 
   if (joinError || !member) {
+    console.error('[joinCircle] member insert failed:', joinError?.message)
     redirect(`/dashboard/join/${inviteCode}?error=${encodeURIComponent(joinError?.message ?? 'Failed to join')}`)
   }
 
@@ -172,8 +189,8 @@ export async function joinCircle(circleId: string, inviteCode: string) {
     status: 'pending',
   })
 
-  revalidatePath('/dashboard')
-  revalidatePath(`/dashboard/circles/${circleId}`)
+  revalidatePath('/dashboard', 'layout')          // bust all dashboard routes
+  revalidatePath(`/dashboard/circles/${circleId}`) // bust the specific circle page
   redirect(`/dashboard/circles/${circleId}`)
 }
 

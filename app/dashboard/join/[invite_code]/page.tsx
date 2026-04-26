@@ -55,6 +55,22 @@ export default async function JoinCirclePage({
     .ilike('invite_code', normalizedCode)
     .single()
 
+  // Log the real Supabase error so it shows in Vercel function logs.
+  // The most common cause of a miss on a valid code is an RLS policy that
+  // only allows members to read circles — run the SQL in the comment below
+  // in your Supabase SQL editor to fix it:
+  //
+  //   create policy "Authenticated users can look up any circle by invite code"
+  //   on circles for select to authenticated using (true);
+  //
+  if (circleError) {
+    console.error(
+      '[join] circle lookup failed — code:', normalizedCode,
+      '| supabase error:', circleError.code, circleError.message,
+      '| hint: if code is "PGRST116" the row exists but RLS is blocking the read'
+    )
+  }
+
   // Circle not found or DB error — show a clear message, not a hard 404
   if (circleError || !circle) {
     return <InvalidCodeState code={normalizedCode} />
