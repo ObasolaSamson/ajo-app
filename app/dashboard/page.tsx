@@ -43,17 +43,40 @@ export default async function DashboardPage() {
   const displayName =
     user.user_metadata?.full_name || user.email?.split('@')[0] || 'there'
 
-  // Single query — the only blocking fetch on this page
-  const { data: memberships } = await supabase
-    .from('circle_members')
-    .select(
-      'circle_id, circles(id, name, description, frequency, contribution_amount, total_slots, current_round, status, start_date, invite_code, organizer_id, created_at)'
-    )
-    .eq('profile_id', user.id)
-    .order('joined_at', { ascending: false })
+  // Fetch circles the user owns AND circles they're a member of in parallel.
+  // A user might be organizer without a circle_members row (edge case), so we
+  // always check both and deduplicate by id before rendering.
+  const [ownedResult, membershipResult] = await Promise.all([
+    supabase
+      .from('circles')
+      .select('id, name, description, frequency, contribution_amount, total_slots, current_round, status, start_date, invite_code, organizer_id, created_at')
+      .eq('organizer_id', user.id)
+      .order('created_at', { ascending: false }),
 
-  const circles = (memberships ?? []).map(
-    (m) => m.circles as unknown as CircleRow
+    supabase
+      .from('circle_members')
+      .select('circle_id, circles(id, name, description, frequency, contribution_amount, total_slots, current_round, status, start_date, invite_code, organizer_id, created_at)')
+      .eq('profile_id', user.id)
+      .order('joined_at', { ascending: false }),
+  ])
+
+  // Build a deduplicated map (id → CircleRow), owned circles first so that
+  // if a user is both organizer and member the owned row is kept.
+  const circleMap = new Map<string, CircleRow>()
+
+  for (const circle of (ownedResult.data ?? []) as CircleRow[]) {
+    circleMap.set(circle.id, circle)
+  }
+  for (const m of membershipResult.data ?? []) {
+    const circle = m.circles as unknown as CircleRow
+    if (circle && !circleMap.has(circle.id)) {
+      circleMap.set(circle.id, circle)
+    }
+  }
+
+  // Sort by created_at descending (most recent first)
+  const circles = Array.from(circleMap.values()).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   )
   const circleIds = circles.map((c) => c.id)
 

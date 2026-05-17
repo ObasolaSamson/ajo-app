@@ -22,6 +22,24 @@ function frequencyLabel(freq: string) {
   return freq === 'weekly' ? 'Weekly' : 'Monthly'
 }
 
+type ProfileShape = { full_name?: string | null; email?: string | null } | null
+
+/**
+ * Extract a display name from a Supabase nested profiles join.
+ * Supabase may return the relation as a single object or a one-element array
+ * depending on how the foreign key is registered — handle both.
+ * Falls back to the part of the email before "@", then "Member".
+ */
+function memberDisplayName(profiles: unknown): string {
+  const p: ProfileShape = Array.isArray(profiles)
+    ? (profiles[0] ?? null)
+    : (profiles as ProfileShape)
+  if (!p) return 'Member'
+  if (p.full_name?.trim()) return p.full_name.trim()
+  if (p.email) return p.email.split('@')[0]
+  return 'Member'
+}
+
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -57,7 +75,7 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
   const [membersResult, payoutSlotsResult, contributionsResult] = await Promise.all([
     supabase
       .from('circle_members')
-      .select('*, profiles(full_name, email)')
+      .select('*, profiles(id, full_name, email, avatar_url)')
       .eq('circle_id', id)
       .order('joined_at', { ascending: true }),
     supabase
@@ -98,8 +116,9 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
   const payoutMember = payoutSlot
     ? membersWithSlots.find((m) => m.slot?.slot_number === currentRound)
     : null
-  const payoutProfile = payoutMember?.profiles as { full_name?: string; email?: string } | null
-  const payoutRecipientName = payoutProfile?.full_name || payoutProfile?.email || 'Unknown'
+  const payoutRecipientName = payoutMember
+    ? memberDisplayName(payoutMember.profiles)
+    : 'Unknown'
 
   // My slot number
   const mySlotNumber = currentMember
@@ -230,11 +249,11 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
         ) : (
           <ul className="space-y-2">
             {membersWithSlots.map((m) => {
-              const profile = m.profiles as { full_name?: string; email?: string } | null
-              const name = profile?.full_name || profile?.email || 'Member'
+              const name = memberDisplayName(m.profiles)
               const hasPaid = paidMemberIds.has(m.id)
               const isYou = m.profile_id === user.id
               const slotNumber = m.slot?.slot_number
+              const isOrg = m.role === 'organizer'
 
               return (
                 <li
@@ -253,7 +272,7 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
                     {slotNumber ?? '—'}
                   </div>
 
-                  {/* Name */}
+                  {/* Name + role */}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-zinc-800 truncate">
                       {name}
@@ -261,6 +280,11 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
                         <span className="ml-2 text-xs text-zinc-400 font-normal">(you)</span>
                       )}
                     </p>
+                    {isOrg && (
+                      <span className="mt-0.5 inline-flex items-center rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-medium text-white">
+                        Organizer
+                      </span>
+                    )}
                   </div>
 
                   {/* Status + action */}
@@ -337,8 +361,7 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
         ) : (
           <ol className="space-y-2">
             {membersWithSlots.map((m, idx) => {
-              const profile = m.profiles as { full_name?: string; email?: string } | null
-              const name = profile?.full_name || profile?.email || 'Member'
+              const name = memberDisplayName(m.profiles)
               const slotNumber = m.slot?.slot_number ?? idx + 1
               const isPaidOut = m.slot?.status === 'paid'
               const isCurrentRound = slotNumber === currentRound
