@@ -2,7 +2,6 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { nanoid } from 'nanoid'
 import { createClient } from '@/lib/supabase/server'
 
 export async function createCircle(formData: FormData) {
@@ -34,7 +33,7 @@ export async function createCircle(formData: FormData) {
   const frequency = formData.get('frequency') as string
   const total_slots = parseInt(formData.get('max_members') as string, 10)
   const start_date = formData.get('start_date') as string
-  const invite_code = nanoid(8).toUpperCase()
+  const invite_code = Math.random().toString(36).substring(2, 10).toUpperCase()
 
   if (!name) {
     redirect(`/dashboard/circles/new?error=${encodeURIComponent('Circle name is required')}`)
@@ -110,14 +109,14 @@ export async function joinCircle(circleId: string, inviteCode: string) {
 
   if (!user) redirect('/login')
 
-  const normalizedCode = inviteCode.trim().toUpperCase()
+  const normalizedCode = inviteCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
 
-  // Verify circle exists — use ilike so any casing difference never blocks a join
+  // Verify circle exists — eq() is safe now that codes are always uppercase alphanumeric
   const { data: circle, error: circleError } = await supabase
     .from('circles')
     .select('id, total_slots')
     .eq('id', circleId)
-    .ilike('invite_code', normalizedCode)
+    .eq('invite_code', normalizedCode)
     .single()
 
   if (circleError || !circle) {

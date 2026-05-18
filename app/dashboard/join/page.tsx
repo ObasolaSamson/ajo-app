@@ -36,7 +36,8 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
         <form
           action={async (formData: FormData) => {
             'use server'
-            const code = (formData.get('code') as string).trim().toUpperCase()
+            const raw = (formData.get('code') as string) ?? ''
+            const code = raw.trim().toUpperCase().replace(/[^A-Z0-9]/gi, '')
             redirect(`/dashboard/join/${code}`)
           }}
           className="space-y-4"
