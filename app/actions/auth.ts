@@ -11,6 +11,42 @@ function safeRedirect(value: FormDataEntryValue | null): string {
   return value
 }
 
+/** Map raw Supabase auth error messages/codes to user-friendly copy + a short code. */
+function friendlySignupError(
+  raw: string,
+  supabaseCode?: string,
+  status?: number,
+): { message: string; code: string } {
+  const m = raw.toLowerCase()
+  const sc = (supabaseCode ?? '').toLowerCase()
+
+  // Email already in use — check message, supabase code, and HTTP status 422
+  if (
+    m.includes('already registered') ||
+    m.includes('already exists') ||
+    m.includes('email already') ||
+    m.includes('user_already_exists') ||
+    sc === 'user_already_exists' ||
+    sc === 'email_exists' ||
+    status === 422
+  ) {
+    return { message: 'An account with this email already exists. Please sign in instead.', code: 'email_in_use' }
+  }
+  if (m.includes('invalid email') || m.includes('unable to validate email') || sc === 'invalid_email') {
+    return { message: 'Please enter a valid email address.', code: 'invalid_email' }
+  }
+  if (m.includes('password') && (m.includes('short') || m.includes('least') || m.includes('characters') || m.includes('weak'))) {
+    return { message: 'Password must be at least 6 characters.', code: 'weak_password' }
+  }
+  if (m.includes('rate limit') || m.includes('too many') || sc.includes('over_email_send_rate_limit')) {
+    return { message: 'Too many attempts. Please wait a moment and try again.', code: 'rate_limit' }
+  }
+  if (m.includes('network') || m.includes('fetch')) {
+    return { message: 'Network error. Check your connection and try again.', code: 'network' }
+  }
+  return { message: raw, code: 'unknown' }
+}
+
 export async function login(formData: FormData) {
   const supabase = await createClient()
 
@@ -58,7 +94,8 @@ export async function signup(formData: FormData) {
 
   let userId: string | null = null
   let session: unknown = undefined
-  let error: { message: string } | null = null
+  let identities: unknown[] | null = null
+  let error: { message: string; code?: string; status?: number } | null = null
 
   try {
     const result = await supabase.auth.signUp({
@@ -66,8 +103,16 @@ export async function signup(formData: FormData) {
       password,
       options: { data: { full_name: fullName } },
     })
+
+    // Log everything so the exact Supabase response is visible in server logs
+    console.log('[signup] raw result.data.user.id:', result.data?.user?.id)
+    console.log('[signup] raw result.data.user.identities:', JSON.stringify(result.data?.user?.identities))
+    console.log('[signup] raw result.data.session:', result.data?.session ? 'present' : 'null')
+    console.log('[signup] raw result.error:', JSON.stringify(result.error))
+
     userId = result.data?.user?.id ?? null
     session = result.data?.session ?? null
+    identities = result.data?.user?.identities ?? null
     error = result.error
   } catch (e) {
     console.error('[signup] unexpected error:', e)
@@ -77,8 +122,23 @@ export async function signup(formData: FormData) {
   }
 
   if (error) {
-    console.error('[signup] auth error:', error.message)
-    const params = new URLSearchParams({ error: error.message, redirect: redirectTo })
+    // Log the raw code and status so we can see exactly what Supabase sends
+    console.error('[signup] auth error — message:', error.message, '| code:', error.code, '| status:', error.status)
+    const { message, code } = friendlySignupError(error.message, error.code, error.status)
+    const params = new URLSearchParams({ error: message, errorCode: code, redirect: redirectTo })
+    redirect(`/signup?${params}`)
+  }
+
+  // Supabase silently "succeeds" for duplicate emails when email confirmation is
+  // enabled (anti-enumeration protection). The tell: identities is an empty array.
+  // A genuine new signup always has at least one identity entry.
+  if (Array.isArray(identities) && identities.length === 0) {
+    console.log('[signup] duplicate email detected via empty identities — email:', email)
+    const params = new URLSearchParams({
+      error: 'An account with this email already exists. Please sign in instead.',
+      errorCode: 'email_in_use',
+      redirect: redirectTo,
+    })
     redirect(`/signup?${params}`)
   }
 

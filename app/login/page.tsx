@@ -3,11 +3,11 @@ import { login } from '@/app/actions/auth'
 import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface LoginPageProps {
-  searchParams: Promise<{ error?: string; redirect?: string }>
+  searchParams: Promise<{ error?: string; redirect?: string; reason?: string }>
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { error, redirect: redirectTo } = await searchParams
+  const { error, redirect: redirectTo, reason } = await searchParams
 
   return (
     <div className="min-h-screen flex">
@@ -81,6 +81,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               Sign in to your account to continue.
             </p>
           </div>
+
+          {reason === 'timeout' && (
+            <div className="mb-6 rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-800">
+              You were signed out due to inactivity. Please sign in again.
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-700">
