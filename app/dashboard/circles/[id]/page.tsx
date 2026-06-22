@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { markAsPaid } from '@/app/actions/circles'
 import { ReleasePayoutButton } from '@/app/components/ReleasePayoutButton'
 import { SubmitButton } from '@/app/components/SubmitButton'
+import { DeleteCircleButton } from '@/app/components/DeleteCircleButton'
 
 interface CircleDetailPageProps {
   params: Promise<{ id: string }>
@@ -347,7 +348,7 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
         )}
       </div>
 
-      {/* Payout Order */}
+      {/* Payout Order — shows all N slots, empty slots shown as "Available" */}
       <div className="bg-white rounded-2xl border border-zinc-100 shadow-sm p-6">
         <h2 className="font-semibold text-zinc-900 mb-4">
           Payout Order
@@ -356,65 +357,111 @@ export default async function CircleDetailPage({ params, searchParams }: CircleD
           </span>
         </h2>
 
-        {membersWithSlots.length === 0 ? (
-          <p className="text-sm text-zinc-400">No members yet.</p>
-        ) : (
-          <ol className="space-y-2">
-            {membersWithSlots.map((m, idx) => {
-              const name = memberDisplayName(m.profiles)
-              const slotNumber = m.slot?.slot_number ?? idx + 1
-              const isPaidOut = m.slot?.status === 'paid'
-              const isCurrentRound = slotNumber === currentRound
-              const isYou = m.profile_id === user.id
+        <ol className="space-y-2">
+          {Array.from({ length: circle.total_slots }, (_, i) => i + 1).map((slotNum) => {
+            const slot = slots.find((s) => s.slot_number === slotNum)
+            const memberWithSlot = slot
+              ? membersWithSlots.find((m) => m.slot?.slot_number === slotNum)
+              : null
+            const isEmpty = !slot
+            const isPaidOut = slot?.status === 'paid'
+            const isCurrentRound = slotNum === currentRound
+            const isYou = memberWithSlot?.profile_id === user.id
+            const name = memberWithSlot ? memberDisplayName(memberWithSlot.profiles) : null
 
-              return (
-                <li key={m.id} className="flex items-center gap-3 rounded-lg p-3 bg-zinc-50">
-                  <div
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold
-                      ${isPaidOut
-                        ? 'bg-zinc-200 text-zinc-400'
-                        : isCurrentRound
-                        ? 'bg-ajo text-white'
-                        : 'bg-ajo-light text-ajo'
-                      }`}
-                  >
-                    {slotNumber}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-zinc-800 truncate">
-                      {name}
-                      {isYou && (
-                        <span className="ml-2 text-xs text-zinc-400 font-normal">(you)</span>
-                      )}
-                    </p>
-                    {m.slot?.payout_date && (
-                      <p className="text-xs text-zinc-400">
-                        Payout: {formatDate(m.slot.payout_date)}
-                      </p>
-                    )}
-                  </div>
-                  <div className="shrink-0 text-right">
-                    {isPaidOut ? (
-                      <span className="text-xs text-zinc-400">Paid out</span>
-                    ) : isCurrentRound ? (
-                      <span className="inline-flex items-center rounded-full bg-ajo px-2 py-0.5 text-xs font-medium text-white">
-                        This round
-                      </span>
-                    ) : null}
-                  </div>
-                </li>
+            let statusBadge: React.ReactNode = null
+            if (isEmpty) {
+              statusBadge = (
+                <span className="text-xs text-zinc-400 italic">Open</span>
               )
-            })}
-          </ol>
-        )}
+            } else if (isPaidOut) {
+              statusBadge = <span className="text-xs text-zinc-400">Paid out</span>
+            } else if (isCurrentRound) {
+              statusBadge = (
+                <span className="inline-flex items-center rounded-full bg-ajo px-2 py-0.5 text-xs font-medium text-white">
+                  Next payout
+                </span>
+              )
+            } else {
+              statusBadge = (
+                <span className="text-xs text-zinc-400">Upcoming</span>
+              )
+            }
+
+            return (
+              <li
+                key={slotNum}
+                className={`flex items-center gap-3 rounded-lg p-3
+                  ${isEmpty
+                    ? 'bg-zinc-50 border border-dashed border-zinc-200'
+                    : 'bg-zinc-50 border border-zinc-100'
+                  }`}
+              >
+                {/* Slot number badge */}
+                <div
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold
+                    ${isEmpty
+                      ? 'bg-zinc-100 text-zinc-400'
+                      : isPaidOut
+                      ? 'bg-zinc-200 text-zinc-400'
+                      : isCurrentRound
+                      ? 'bg-ajo text-white'
+                      : 'bg-ajo-light text-ajo'
+                    }`}
+                >
+                  {slotNum}
+                </div>
+
+                {/* Member name + payout date */}
+                <div className="flex-1 min-w-0">
+                  {isEmpty ? (
+                    <p className="text-sm text-zinc-400 italic">Available</p>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-zinc-800 truncate">
+                        {name}
+                        {isYou && (
+                          <span className="ml-2 text-xs text-zinc-400 font-normal">(you)</span>
+                        )}
+                      </p>
+                      {slot?.payout_date && (
+                        <p className="text-xs text-zinc-400">
+                          {formatDate(slot.payout_date)}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Status */}
+                <div className="shrink-0 text-right">{statusBadge}</div>
+              </li>
+            )
+          })}
+        </ol>
 
         {memberList.length < circle.total_slots && (
-          <p className="mt-3 text-xs text-zinc-400 text-center">
-            {circle.total_slots - memberList.length} open slot
-            {circle.total_slots - memberList.length > 1 ? 's' : ''} remaining
-          </p>
+          <div className="mt-4 text-center">
+            <p className="text-xs text-zinc-400">
+              {circle.total_slots - memberList.length} open slot
+              {circle.total_slots - memberList.length > 1 ? 's' : ''} — share the invite link to fill them
+            </p>
+          </div>
         )}
       </div>
+
+      {/* Danger zone — organizer only */}
+      {isOrganizer && (
+        <div className="rounded-2xl border border-red-100 bg-white shadow-sm p-6">
+          <h2 className="text-sm font-semibold text-red-600 uppercase tracking-wide mb-1">
+            Danger Zone
+          </h2>
+          <p className="text-sm text-zinc-500 mb-4">
+            Permanently delete this circle and all its data. This cannot be undone.
+          </p>
+          <DeleteCircleButton circleId={id} circleName={circle.name} />
+        </div>
+      )}
 
       {/* Invite link (members only) */}
       {isMember && (

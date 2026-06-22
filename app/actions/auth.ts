@@ -181,3 +181,49 @@ export async function logout() {
   revalidatePath('/', 'layout')
   redirect('/login')
 }
+
+export async function requestPasswordReset(formData: FormData) {
+  const email = ((formData.get('email') as string) ?? '').trim()
+
+  if (!email) {
+    redirect(`/forgot-password?error=${encodeURIComponent('Please enter your email address')}`)
+  }
+
+  const supabase = await createClient()
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  // The callback route exchanges the code for a session, then forwards to /reset-password
+  const redirectTo = `${appUrl}/auth/callback?next=/reset-password`
+
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
+    if (error) {
+      console.error('[requestPasswordReset] error:', error.message)
+    }
+  } catch (e) {
+    console.error('[requestPasswordReset] unexpected error:', e)
+  }
+
+  // Always show the success page — never reveal whether an address is registered
+  redirect(`/forgot-password/sent?email=${encodeURIComponent(email)}`)
+}
+
+export async function resetPassword(formData: FormData) {
+  const password = ((formData.get('password') as string) ?? '').trim()
+
+  if (!password || password.length < 6) {
+    redirect(`/reset-password?error=${encodeURIComponent('Password must be at least 6 characters')}`)
+  }
+
+  const supabase = await createClient()
+  const { error } = await supabase.auth.updateUser({ password })
+
+  if (error) {
+    console.error('[resetPassword] error:', error.message)
+    redirect(`/reset-password?error=${encodeURIComponent(error.message)}`)
+  }
+
+  // Sign out the recovery session so the user logs in fresh
+  await supabase.auth.signOut()
+  revalidatePath('/', 'layout')
+  redirect('/login?message=password_updated')
+}

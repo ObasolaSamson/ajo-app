@@ -3,6 +3,26 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+
+/**
+ * Calculate the payout date for a given slot.
+ * Uses local date arithmetic to avoid UTC-offset surprises.
+ */
+function calculatePayoutDate(startDate: string, frequency: string, slotNumber: number): string {
+  const [y, m, d] = startDate.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  if (frequency === 'weekly') {
+    date.setDate(date.getDate() + (slotNumber - 1) * 7)
+  } else {
+    date.setMonth(date.getMonth() + (slotNumber - 1))
+  }
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+}
 
 export async function createCircle(formData: FormData) {
   const supabase = await createClient()
@@ -33,6 +53,7 @@ export async function createCircle(formData: FormData) {
   const frequency = formData.get('frequency') as string
   const total_slots = parseInt(formData.get('max_members') as string, 10)
   const start_date = formData.get('start_date') as string
+  const organizer_slot = parseInt((formData.get('organizer_slot') as string) ?? '', 10)
   const invite_code = Math.random().toString(36).substring(2, 10).toUpperCase()
 
   if (!name) {
@@ -43,6 +64,9 @@ export async function createCircle(formData: FormData) {
   }
   if (isNaN(total_slots) || total_slots < 2 || total_slots > 50) {
     redirect(`/dashboard/circles/new?error=${encodeURIComponent('Number of members must be between 2 and 50')}`)
+  }
+  if (isNaN(organizer_slot) || organizer_slot < 1 || organizer_slot > total_slots) {
+    redirect(`/dashboard/circles/new?error=${encodeURIComponent('Please select your payout slot')}`)
   }
 
   const { data: circle, error } = await supabase
@@ -82,25 +106,45 @@ export async function createCircle(formData: FormData) {
     redirect(`/dashboard/circles/new?error=${encodeURIComponent(memberError?.message ?? 'Failed to add member')}`)
   }
 
-  // Assign payout slot #1 to the creator
-  const { error: slotError } = await supabase.from('payout_slots').insert({
+  // Assign the organizer's chosen payout slot with calculated payout date
+  const organizerPayoutDate = calculatePayoutDate(start_date, frequency, organizer_slot)
+
+  console.log('[createCircle] inserting payout slot —', {
     circle_id: circle.id,
-    member_id: member.id,
-    slot_number: 1,
+    member_id: member.id, // this is circle_members.id, not the user's profile id
+    slot_number: organizer_slot,
+    payout_date: organizerPayoutDate,
+    status: 'pending',
+  })
+
+  // Use admin client so RLS on payout_slots never blocks the organizer's slot insert
+  const admin = createAdminClient()
+  const { error: slotError } = await admin.from('payout_slots').insert({
+    circle_id: circle.id,
+    member_id: member.id,   // circle_members.id — NOT the user's profile id
+    slot_number: organizer_slot,
+    payout_date: organizerPayoutDate,
     status: 'pending',
   })
 
   if (slotError) {
+    console.error('[createCircle] payout_slots insert failed:', slotError.message, slotError.code)
     await supabase.from('circle_members').delete().eq('id', member.id)
     await supabase.from('circles').delete().eq('id', circle.id)
     redirect(`/dashboard/circles/new?error=${encodeURIComponent(slotError.message)}`)
   }
 
+  console.log('[createCircle] payout slot saved — slot #' + organizer_slot + ' for circle', circle.id)
+
   revalidatePath('/dashboard')
   redirect(`/dashboard/circles/${circle.id}`)
 }
 
-export async function joinCircle(circleId: string, inviteCode: string) {
+export async function joinCircle(
+  circleId: string,
+  inviteCode: string,
+  formData: FormData,
+): Promise<{ error: string } | undefined> {
   const supabase = await createClient()
 
   const {
@@ -114,7 +158,7 @@ export async function joinCircle(circleId: string, inviteCode: string) {
   // Verify circle exists — eq() is safe now that codes are always uppercase alphanumeric
   const { data: circle, error: circleError } = await supabase
     .from('circles')
-    .select('id, total_slots')
+    .select('id, total_slots, start_date, frequency')
     .eq('id', circleId)
     .eq('invite_code', normalizedCode)
     .single()
@@ -160,8 +204,37 @@ export async function joinCircle(circleId: string, inviteCode: string) {
   const currentCount = count ?? 0
 
   if (currentCount >= circle.total_slots) {
+    // Circle just became full — redirect so the page re-renders with the full state
     redirect(`/dashboard/join/${inviteCode}?error=${encodeURIComponent('This circle is full')}`)
   }
+
+  // Validate chosen slot — return error so the client shows it inline
+  const slotNumber = parseInt((formData.get('slot_number') as string) ?? '', 10)
+  if (isNaN(slotNumber) || slotNumber < 1 || slotNumber > circle.total_slots) {
+    return { error: 'Please select a valid payout slot' }
+  }
+
+  // Race-condition / RLS-safe slot check.
+  // Must use the admin client here: the joining user is not yet a member, so
+  // the regular (RLS-scoped) client returns null even when the slot IS taken,
+  // letting two users claim the same slot simultaneously.
+  const admin = createAdminClient()
+  const { data: slotTaken, error: slotCheckError } = await admin
+    .from('payout_slots')
+    .select('id')
+    .eq('circle_id', circleId)
+    .eq('slot_number', slotNumber)
+    .maybeSingle()
+
+  if (slotCheckError) {
+    console.error('[joinCircle] slot check error:', slotCheckError.message)
+  }
+
+  if (slotTaken) {
+    return { error: 'Slot #' + slotNumber + ' is already taken — please choose another' }
+  }
+
+  console.log('[joinCircle] selected slot:', slotNumber, '| circle:', circleId)
 
   // Insert member
   const { data: member, error: joinError } = await supabase
@@ -172,21 +245,40 @@ export async function joinCircle(circleId: string, inviteCode: string) {
       role: 'member',
       status: 'active',
     })
-    .select()
+    .select('id')
     .single()
 
   if (joinError || !member) {
-    console.error('[joinCircle] member insert failed:', joinError?.message)
+    console.error('[joinCircle] circle_members insert failed:', joinError?.message, joinError?.code)
     redirect(`/dashboard/join/${inviteCode}?error=${encodeURIComponent(joinError?.message ?? 'Failed to join')}`)
   }
 
-  // Assign next payout slot
-  await supabase.from('payout_slots').insert({
-    circle_id: circleId,
-    member_id: member.id,
-    slot_number: currentCount + 1,
-    status: 'pending',
-  })
+  console.log('[joinCircle] member inserted — circle_members.id (member_id):', member.id)
+
+  // Insert payout slot.
+  // Use the admin client so RLS on payout_slots never blocks the insert —
+  // the same reason we use admin for the pre-insert slot check above.
+  const payoutDate = calculatePayoutDate(circle.start_date, circle.frequency, slotNumber)
+  const { data: slotData, error: slotInsertError } = await admin
+    .from('payout_slots')
+    .insert({
+      circle_id: circleId,
+      member_id: member.id,   // circle_members.id — NOT the user's profile id
+      slot_number: slotNumber,
+      payout_date: payoutDate,
+      status: 'pending',
+    })
+    .select()
+    .single()
+
+  console.log('[joinCircle] payout_slots insert result — data:', slotData, '| error:', slotInsertError?.message, slotInsertError?.code)
+
+  if (slotInsertError) {
+    // Rollback the circle_members row so the user can try again
+    await supabase.from('circle_members').delete().eq('id', member.id)
+    console.error('[joinCircle] payout_slots insert failed — rolled back member row')
+    return { error: 'Slot #' + slotNumber + ' was just taken — please choose another' }
+  }
 
   revalidatePath('/dashboard', 'layout')          // bust all dashboard routes
   revalidatePath(`/dashboard/circles/${circleId}`) // bust the specific circle page
@@ -283,4 +375,42 @@ export async function releasePayout(circleId: string) {
   revalidatePath(`/dashboard/circles/${circleId}`)
   revalidatePath('/dashboard')
   redirect(`/dashboard/circles/${circleId}`)
+}
+
+export async function deleteCircle(formData: FormData) {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) redirect('/login')
+
+  const circleId = formData.get('circle_id') as string
+
+  // Verify the caller is the organizer before doing anything destructive
+  const { data: circle } = await supabase
+    .from('circles')
+    .select('id, organizer_id, name')
+    .eq('id', circleId)
+    .single()
+
+  if (!circle) redirect('/dashboard')
+  if (circle.organizer_id !== user.id) redirect(`/dashboard/circles/${circleId}`)
+
+  // Delete child records first so the action works even without CASCADE FK constraints.
+  // Order: contributions → payout_slots → circle_members → circles
+  await supabase.from('contributions').delete().eq('circle_id', circleId)
+  await supabase.from('payout_slots').delete().eq('circle_id', circleId)
+  await supabase.from('circle_members').delete().eq('circle_id', circleId)
+
+  const { error } = await supabase.from('circles').delete().eq('id', circleId)
+
+  if (error) {
+    console.error('[deleteCircle] failed to delete circle:', error.message)
+    redirect(`/dashboard/circles/${circleId}?error=${encodeURIComponent('Failed to delete circle: ' + error.message)}`)
+  }
+
+  revalidatePath('/dashboard', 'layout')
+  redirect('/dashboard')
 }

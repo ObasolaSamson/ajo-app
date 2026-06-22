@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { joinCircle } from '@/app/actions/circles'
-import { SubmitButton } from '@/app/components/SubmitButton'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { JoinCircleSlotPicker } from './JoinCircleSlotPicker'
 
 interface JoinCirclePageProps {
   params: Promise<{ invite_code: string }>
@@ -56,25 +56,36 @@ export default async function JoinCirclePage({
     return <InvalidCodeState code={normalizedCode} />
   }
 
-  // Member count and existing-membership check in parallel
-  const [countResult, existingResult] = await Promise.all([
-    supabase
+  // Use admin client to bypass RLS — the joining user is not yet a member,
+  // so RLS would block circle_members and payout_slots reads.
+  const admin = createAdminClient()
+
+  const [countResult, membersResult, slotsResult] = await Promise.all([
+    admin
       .from('circle_members')
       .select('id', { count: 'exact', head: true })
       .eq('circle_id', circle.id),
+    // Use the user's own session for the membership check (RLS correctly scopes this)
     supabase
       .from('circle_members')
-      .select('id')
+      .select('id, profile_id')
       .eq('circle_id', circle.id)
-      .eq('profile_id', user.id)
-      .maybeSingle(),           // maybeSingle() never errors on zero rows
+      .eq('profile_id', user.id),
+    admin
+      .from('payout_slots')
+      .select('slot_number')
+      .eq('circle_id', circle.id),
   ])
 
   const currentCount = countResult.count ?? 0
-  const isMember = !!existingResult.data
+  const isMember = (membersResult.data ?? []).length > 0
   const isFull = currentCount >= circle.total_slots
 
-  const joinWithCode = joinCircle.bind(null, circle.id, normalizedCode)
+  const takenSlotNumbers: number[] = (slotsResult.data ?? []).map(
+    (s: { slot_number: number }) => s.slot_number,
+  )
+
+  console.log('[JoinCirclePage] takenSlotNumbers:', takenSlotNumbers)
 
   return (
     <div className="max-w-md mx-auto">
@@ -139,14 +150,12 @@ export default async function JoinCirclePage({
                       {currentCount} / {circle.total_slots}
                     </p>
                   </div>
-                  {!isFull && (
-                    <div>
-                      <p className="text-xs text-zinc-400">Your payout slot</p>
-                      <p className="text-sm font-semibold text-zinc-900">
-                        #{currentCount + 1}
-                      </p>
-                    </div>
-                  )}
+                  <div>
+                    <p className="text-xs text-zinc-400">Open slots</p>
+                    <p className="text-sm font-semibold text-zinc-900">
+                      {circle.total_slots - currentCount} of {circle.total_slots}
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -168,17 +177,12 @@ export default async function JoinCirclePage({
               {isFull ? (
                 <CircleFullState circle={circle} />
               ) : (
-                <form action={joinWithCode}>
-                  <SubmitButton
-                    pendingText="Joining circle…"
-                    className="w-full rounded-lg bg-ajo px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-ajo-dark focus:outline-none focus:ring-2 focus:ring-ajo focus:ring-offset-2 transition-colors"
-                  >
-                    Confirm &amp; Join Circle
-                  </SubmitButton>
-                  <p className="mt-3 text-center text-xs text-zinc-400">
-                    You&apos;ll be assigned payout slot #{currentCount + 1}
-                  </p>
-                </form>
+                <JoinCircleSlotPicker
+                  circleId={circle.id}
+                  inviteCode={normalizedCode}
+                  totalSlots={circle.total_slots}
+                  takenSlotNumbers={takenSlotNumbers}
+                />
               )}
             </>
           )}

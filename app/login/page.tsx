@@ -3,11 +3,11 @@ import { login } from '@/app/actions/auth'
 import { SubmitButton } from '@/app/components/SubmitButton'
 
 interface LoginPageProps {
-  searchParams: Promise<{ error?: string; redirect?: string; reason?: string }>
+  searchParams: Promise<{ error?: string; redirect?: string; reason?: string; message?: string }>
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { error, redirect: redirectTo, reason } = await searchParams
+  const { error, redirect: redirectTo, reason, message } = await searchParams
 
   return (
     <div className="min-h-screen flex">
@@ -82,6 +82,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             </p>
           </div>
 
+          {message === 'password_updated' && (
+            <div className="mb-6 rounded-xl bg-ajo-light border border-ajo-muted px-4 py-3 text-sm text-ajo-dark font-medium">
+              ✓ Password updated successfully. Please sign in with your new password.
+            </div>
+          )}
+
           {reason === 'timeout' && (
             <div className="mb-6 rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-800">
               You were signed out due to inactivity. Please sign in again.
@@ -118,6 +124,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 <label htmlFor="password" className="block text-sm font-medium text-zinc-700">
                   Password
                 </label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs font-medium text-ajo hover:text-ajo-dark transition-colors"
+                >
+                  Forgot password?
+                </Link>
               </div>
               <input
                 id="password"
