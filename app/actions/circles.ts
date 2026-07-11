@@ -39,7 +39,7 @@ export async function createCircle(formData: FormData) {
   await supabase
     .from('profiles')
     .upsert(
-      { id: user.id, email: user.email ?? '', full_name: user.user_metadata?.full_name ?? null },
+      { id: user.id, email: user.email ?? '', full_name: user.user_metadata?.full_name ?? '' },
       { onConflict: 'id', ignoreDuplicates: true }
     )
 
@@ -152,6 +152,13 @@ export async function joinCircle(
   } = await supabase.auth.getUser()
 
   if (!user) redirect('/login')
+
+  // Ensure a profile row exists before any FK references (circle_members.profile_id).
+  // New users sometimes don't have a profile yet if the DB trigger hasn't fired.
+  await supabase.from('profiles').upsert(
+    { id: user.id, email: user.email ?? '', full_name: user.user_metadata?.full_name ?? '' },
+    { onConflict: 'id', ignoreDuplicates: true },
+  )
 
   const normalizedCode = inviteCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
 
