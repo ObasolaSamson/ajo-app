@@ -24,6 +24,116 @@ function calculatePayoutDate(startDate: string, frequency: string, slotNumber: n
   ].join('-')
 }
 
+function managePath(circleId: string, query?: { error?: string; success?: string }) {
+  const params = new URLSearchParams()
+  if (query?.error) params.set('error', query.error)
+  if (query?.success) params.set('success', query.success)
+  const qs = params.toString()
+  return `/dashboard/circles/${circleId}/manage${qs ? `?${qs}` : ''}`
+}
+
+function redirectToManage(circleId: string, query?: { error?: string; success?: string }): never {
+  redirect(managePath(circleId, query))
+}
+
+function revalidateCircle(circleId: string) {
+  revalidatePath(`/dashboard/circles/${circleId}`)
+  revalidatePath(`/dashboard/circles/${circleId}/manage`)
+  revalidatePath('/dashboard')
+}
+
+/** Only allow returning to this circle's detail or manage page. */
+function safeCircleReturnPath(circleId: string, value: FormDataEntryValue | null): string {
+  const fallback = `/dashboard/circles/${circleId}`
+  const manage = `${fallback}/manage`
+  if (typeof value !== 'string') return fallback
+  if (value === fallback || value === manage) return value
+  return fallback
+}
+
+async function requireOrganizer(circleId: string) {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) redirect('/login')
+
+  const { data: circle } = await supabase
+    .from('circles')
+    .select('id, organizer_id, name, start_date, frequency, total_slots, contribution_amount, current_round')
+    .eq('id', circleId)
+    .single()
+
+  if (!circle) redirect('/dashboard')
+  if (circle.organizer_id !== user.id) redirect(`/dashboard/circles/${circleId}`)
+
+  return { supabase, user, circle, admin: createAdminClient() }
+}
+
+/**
+ * Create (or reuse) a profile for a member who may not have an Ajo account.
+ * If the email already belongs to a profile, that row is reused so a real
+ * user can still sign in later and see this circle.
+ */
+async function createManagedProfile(
+  admin: ReturnType<typeof createAdminClient>,
+  details: { full_name: string; email: string; phone: string },
+): Promise<{ id: string; created: boolean } | { error: string }> {
+  if (details.email) {
+    const { data: existing } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('email', details.email)
+      .maybeSingle()
+
+    if (existing?.id) return { id: existing.id, created: false }
+  }
+
+  const profileId = crypto.randomUUID()
+  const row = {
+    id: profileId,
+    full_name: details.full_name,
+    email: details.email || null,
+    phone: details.phone || null,
+  }
+
+  const { error: insertError } = await admin.from('profiles').insert(row)
+  if (!insertError) return { id: profileId, created: true }
+
+  console.error('[createManagedProfile] profile insert failed:', insertError.message, insertError.code)
+
+  // Likely a FK to auth.users — create a shadow auth user the member never needs to use.
+  const authEmail = details.email || `managed-${profileId.replace(/-/g, '')}@users.invalid`
+  const { data: created, error: authError } = await admin.auth.admin.createUser({
+    email: authEmail,
+    email_confirm: true,
+    user_metadata: { full_name: details.full_name, managed_member: true },
+  })
+
+  if (authError || !created.user) {
+    console.error('[createManagedProfile] auth.admin.createUser failed:', authError?.message)
+    return { error: insertError.message }
+  }
+
+  const { error: upsertError } = await admin.from('profiles').upsert(
+    {
+      id: created.user.id,
+      full_name: details.full_name,
+      email: details.email || null,
+      phone: details.phone || null,
+    },
+    { onConflict: 'id' },
+  )
+
+  if (upsertError) {
+    console.error('[createManagedProfile] profile upsert failed:', upsertError.message)
+    return { error: upsertError.message }
+  }
+
+  return { id: created.user.id, created: true }
+}
+
 export async function createCircle(formData: FormData) {
   const supabase = await createClient()
 
@@ -337,12 +447,15 @@ export async function markAsPaid(formData: FormData) {
     })
 
     if (error) {
-      redirect(`/dashboard/circles/${circle_id}?error=${encodeURIComponent(error.message)}`)
+      redirect(
+        `${safeCircleReturnPath(circle_id, formData.get('return_path'))}?error=${encodeURIComponent(error.message)}`,
+      )
     }
   }
 
   revalidatePath(`/dashboard/circles/${circle_id}`)
-  redirect(`/dashboard/circles/${circle_id}`)
+  revalidatePath(`/dashboard/circles/${circle_id}/manage`)
+  redirect(safeCircleReturnPath(circle_id, formData.get('return_path')))
 }
 
 export async function releasePayout(circleId: string) {
@@ -380,6 +493,7 @@ export async function releasePayout(circleId: string) {
     .eq('id', circleId)
 
   revalidatePath(`/dashboard/circles/${circleId}`)
+  revalidatePath(`/dashboard/circles/${circleId}/manage`)
   revalidatePath('/dashboard')
   redirect(`/dashboard/circles/${circleId}`)
 }
@@ -420,4 +534,216 @@ export async function deleteCircle(formData: FormData) {
 
   revalidatePath('/dashboard', 'layout')
   redirect('/dashboard')
+}
+
+export async function addManagedMember(formData: FormData) {
+  const circleId = (formData.get('circle_id') as string) ?? ''
+  const full_name = ((formData.get('full_name') as string) ?? '').trim()
+  const email = ((formData.get('email') as string) ?? '').trim().toLowerCase()
+  const phone = ((formData.get('phone') as string) ?? '').trim()
+  const slotNumber = parseInt((formData.get('slot_number') as string) ?? '', 10)
+
+  if (!circleId) redirect('/dashboard')
+
+  const { circle, admin } = await requireOrganizer(circleId)
+
+  if (!full_name) {
+    redirectToManage(circleId, { error: 'Full name is required' })
+  }
+
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    redirectToManage(circleId, { error: 'Please enter a valid email address' })
+  }
+
+  if (isNaN(slotNumber) || slotNumber < 1 || slotNumber > circle.total_slots) {
+    redirectToManage(circleId, { error: 'Please assign a payout slot' })
+  }
+
+  const { count, error: countError } = await admin
+    .from('circle_members')
+    .select('id', { count: 'exact', head: true })
+    .eq('circle_id', circleId)
+
+  if (countError) {
+    console.error('[addManagedMember] member count failed:', countError.message)
+    redirectToManage(circleId, { error: 'Could not check circle capacity. Please try again.' })
+  }
+
+  if ((count ?? 0) >= circle.total_slots) {
+    redirectToManage(circleId, { error: 'This circle is full' })
+  }
+
+  const { data: slotTaken } = await admin
+    .from('payout_slots')
+    .select('id')
+    .eq('circle_id', circleId)
+    .eq('slot_number', slotNumber)
+    .maybeSingle()
+
+  if (slotTaken) {
+    redirectToManage(circleId, { error: `Slot #${slotNumber} is already taken — please choose another` })
+  }
+
+  const profileResult = await createManagedProfile(admin, { full_name, email, phone })
+  if ('error' in profileResult) {
+    redirectToManage(circleId, { error: `Could not create member profile: ${profileResult.error}` })
+  }
+
+  const { data: alreadyMember } = await admin
+    .from('circle_members')
+    .select('id')
+    .eq('circle_id', circleId)
+    .eq('profile_id', profileResult.id)
+    .maybeSingle()
+
+  if (alreadyMember) {
+    redirectToManage(circleId, { error: 'This person is already a member of this circle' })
+  }
+
+  const { data: member, error: memberError } = await admin
+    .from('circle_members')
+    .insert({
+      circle_id: circleId,
+      profile_id: profileResult.id,
+      role: 'member',
+      status: 'active',
+    })
+    .select('id')
+    .single()
+
+  if (memberError || !member) {
+    console.error('[addManagedMember] circle_members insert failed:', memberError?.message)
+    redirectToManage(circleId, { error: memberError?.message ?? 'Failed to add member' })
+  }
+
+  const payoutDate = calculatePayoutDate(circle.start_date, circle.frequency, slotNumber)
+  const { error: slotError } = await admin.from('payout_slots').insert({
+    circle_id: circleId,
+    member_id: member.id,
+    slot_number: slotNumber,
+    payout_date: payoutDate,
+    status: 'pending',
+  })
+
+  if (slotError) {
+    console.error('[addManagedMember] payout_slots insert failed:', slotError.message)
+    await admin.from('circle_members').delete().eq('id', member.id)
+    redirectToManage(circleId, { error: `Slot #${slotNumber} was just taken — please choose another` })
+  }
+
+  revalidateCircle(circleId)
+  redirectToManage(circleId, { success: `${full_name} was added to the circle` })
+}
+
+export async function updateMemberSlot(formData: FormData) {
+  const circleId = (formData.get('circle_id') as string) ?? ''
+  const memberId = (formData.get('member_id') as string) ?? ''
+  const slotNumber = parseInt((formData.get('slot_number') as string) ?? '', 10)
+
+  if (!circleId || !memberId) redirect('/dashboard')
+
+  const { circle, admin } = await requireOrganizer(circleId)
+
+  if (isNaN(slotNumber) || slotNumber < 1 || slotNumber > circle.total_slots) {
+    redirectToManage(circleId, { error: 'Please choose a valid payout slot' })
+  }
+
+  const { data: member } = await admin
+    .from('circle_members')
+    .select('id')
+    .eq('id', memberId)
+    .eq('circle_id', circleId)
+    .maybeSingle()
+
+  if (!member) {
+    redirectToManage(circleId, { error: 'Member not found' })
+  }
+
+  const { data: taken } = await admin
+    .from('payout_slots')
+    .select('id, member_id')
+    .eq('circle_id', circleId)
+    .eq('slot_number', slotNumber)
+    .maybeSingle()
+
+  if (taken && taken.member_id !== memberId) {
+    redirectToManage(circleId, { error: `Slot #${slotNumber} is already taken` })
+  }
+
+  const payoutDate = calculatePayoutDate(circle.start_date, circle.frequency, slotNumber)
+  const { data: existingSlot } = await admin
+    .from('payout_slots')
+    .select('id, slot_number')
+    .eq('circle_id', circleId)
+    .eq('member_id', memberId)
+    .maybeSingle()
+
+  if (existingSlot) {
+    if (existingSlot.slot_number === slotNumber) {
+      redirectToManage(circleId)
+    }
+
+    const { error } = await admin
+      .from('payout_slots')
+      .update({ slot_number: slotNumber, payout_date: payoutDate })
+      .eq('id', existingSlot.id)
+
+    if (error) {
+      console.error('[updateMemberSlot] update failed:', error.message)
+      redirectToManage(circleId, { error: error.message })
+    }
+  } else {
+    const { error } = await admin.from('payout_slots').insert({
+      circle_id: circleId,
+      member_id: memberId,
+      slot_number: slotNumber,
+      payout_date: payoutDate,
+      status: 'pending',
+    })
+
+    if (error) {
+      console.error('[updateMemberSlot] insert failed:', error.message)
+      redirectToManage(circleId, { error: error.message })
+    }
+  }
+
+  revalidateCircle(circleId)
+  redirectToManage(circleId, { success: `Slot updated to #${slotNumber}` })
+}
+
+export async function removeMember(formData: FormData) {
+  const circleId = (formData.get('circle_id') as string) ?? ''
+  const memberId = (formData.get('member_id') as string) ?? ''
+
+  if (!circleId || !memberId) redirect('/dashboard')
+
+  const { circle, admin } = await requireOrganizer(circleId)
+
+  const { data: member } = await admin
+    .from('circle_members')
+    .select('id, role, profile_id')
+    .eq('id', memberId)
+    .eq('circle_id', circleId)
+    .maybeSingle()
+
+  if (!member) {
+    redirectToManage(circleId, { error: 'Member not found' })
+  }
+
+  if (member.role === 'organizer' || member.profile_id === circle.organizer_id) {
+    redirectToManage(circleId, { error: 'The organizer cannot be removed from the circle' })
+  }
+
+  await admin.from('contributions').delete().eq('circle_id', circleId).eq('member_id', memberId)
+  await admin.from('payout_slots').delete().eq('circle_id', circleId).eq('member_id', memberId)
+
+  const { error } = await admin.from('circle_members').delete().eq('id', memberId).eq('circle_id', circleId)
+
+  if (error) {
+    console.error('[removeMember] failed:', error.message)
+    redirectToManage(circleId, { error: 'Failed to remove member: ' + error.message })
+  }
+
+  revalidateCircle(circleId)
+  redirectToManage(circleId, { success: 'Member removed from the circle' })
 }
